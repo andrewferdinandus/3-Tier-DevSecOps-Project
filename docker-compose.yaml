@@ -5,9 +5,11 @@ services:
     image: mysql:8
     container_name: mysql
     restart: always
+    env_file: .env
     environment:
-      MYSQL_ROOT_PASSWORD: Aditya
-      MYSQL_DATABASE: crud_app
+      # These must be passed so the init.sh can read them
+      APP_DB_USER: ${APP_DB_USER}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
     volumes:
       - mysql-data:/var/lib/mysql
       - ./mysql-init:/docker-entrypoint-initdb.d
@@ -15,22 +17,17 @@ services:
       - "3306:3306"
 
   backend:
-    build: ./api
+    # BUILD_NUMBER is injected by Jenkins shell environment
+    image: andrewferdi/backend-latest:${BUILD_NUMBER}
     container_name: backend-api
-    environment:
-      DB_HOST: mysql
-      DB_USER: root
-      DB_PASSWORD: Aditya
-      DB_NAME: crud_app
-      JWT_SECRET: devopsShackSuperSecretKey
-      RESET_ADMIN_PASS: 'true'
+    env_file: .env
     depends_on:
       - mysql
     ports:
       - "5000:5000"
 
   frontend:
-    build: ./client
+    image: andrewferdi/frontend-latest:${BUILD_NUMBER}
     container_name: frontend-react
     ports:
       - "3000:80"
@@ -39,4 +36,3 @@ services:
 
 volumes:
   mysql-data:
-
