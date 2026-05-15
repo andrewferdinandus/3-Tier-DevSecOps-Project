@@ -14,7 +14,7 @@ module "vpc" {
   single_nat_gateway = true
 }
 
-# 2. Compute Layer (EKS)
+# 2. EKS Cluster
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 20.0"
@@ -22,22 +22,17 @@ module "eks" {
   cluster_name    = var.cluster_name
   cluster_version = "1.31"
 
-  # Enables IAM Roles for Kubernetes Service Accounts (OIDC Identity Provider)
   enable_irsa = true
 
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
 
-  # Core Add-ons
   cluster_addons = {
     aws-ebs-csi-driver = {
-      most_recent = true
-      
-      # --- FIX: Explicitly create and attach the required AWS IAM Role ---
-      create_role           = true
-      role_name             = "${var.cluster_name}-ebs-csi-role"
-      attach_ebs_csi_policy = true
+      most_recent              = true
+      service_account_role_arn = module.ebs_csi_irsa_role.iam_role_arn
     }
+
     coredns    = {}
     vpc-cni    = {}
     kube-proxy = {}
@@ -52,6 +47,21 @@ module "eks" {
     }
   }
 
-  # Gives the IAM entity running Terraform (Jenkins) admin rights in K8s
   enable_cluster_creator_admin_permissions = true
+}
+
+# 3. IAM Role for EBS CSI Driver
+module "ebs_csi_irsa_role" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.0"
+
+  role_name             = "${var.cluster_name}-ebs-csi-role"
+  attach_ebs_csi_policy = true
+
+  oidc_providers = {
+    main = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:ebs-csi-controller-sa"]
+    }
+  }
 }
