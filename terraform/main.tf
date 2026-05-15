@@ -22,8 +22,6 @@ module "eks" {
   cluster_name    = var.cluster_name
   cluster_version = "1.31"
 
-  # --- FIX 1: Enable OIDC Provider ---
-  # This creates the Identity Provider so K8s can use IAM roles
   enable_irsa = true
 
   vpc_id     = module.vpc.vpc_id
@@ -32,9 +30,12 @@ module "eks" {
   # Core Add-ons
   cluster_addons = {
     aws-ebs-csi-driver = {
-      # --- FIX 2: Add Permissions to the Driver ---
-      most_recent              = true
-      attach_ebs_csi_policy    = true 
+      most_recent = true
+      # --- THE CRITICAL FIX FOR VERSION 20+ ---
+      # This explicitly builds the IAM role inside the addon module
+      create_role                   = true
+      role_name                     = "${var.cluster_name}-ebs-csi-role"
+      attach_ebs_csi_policy         = true
     }
     coredns    = {}
     vpc-cni    = {}
@@ -50,6 +51,5 @@ module "eks" {
     }
   }
 
-  # Gives the IAM entity running Terraform (Jenkins) admin rights in K8s
   enable_cluster_creator_admin_permissions = true
 }
