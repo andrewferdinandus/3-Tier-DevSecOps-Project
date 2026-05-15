@@ -225,12 +225,6 @@ The backend and database services remain internal to the Kubernetes cluster.
 
 ---
 
-# 📖 Medium / LinkedIn Article
-
-A detailed write-up of this project covering architecture, deployment workflow, and lessons learned is available in my Medium and LinkedIn articles.
-
----
-
 # 🤝 Connect With Me
 
 If you found this project useful, feel free to connect with me on LinkedIn and follow my future DevOps and cloud engineering projects.
