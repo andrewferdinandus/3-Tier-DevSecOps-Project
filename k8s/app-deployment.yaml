@@ -1,0 +1,106 @@
+# ---------------- BACKEND ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+
+spec:
+  replicas: 2
+  progressDeadlineSeconds: 300
+
+  selector:
+    matchLabels:
+      app: backend
+
+  template:
+    metadata:
+      labels:
+        app: backend
+
+    spec:
+      containers:
+        - name: backend
+          image: andrewferdi/backend-latest:IMAGE_TAG
+
+          ports:
+            - containerPort: 5000
+
+          envFrom:
+            - secretRef:
+                name: app-secrets
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+
+spec:
+  selector:
+    app: backend
+
+  ports:
+    - port: 5000
+      targetPort: 5000
+
+---
+# ---------------- FRONTEND ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+
+spec:
+  replicas: 2
+  progressDeadlineSeconds: 300
+
+  selector:
+    matchLabels:
+      app: frontend
+
+  template:
+    metadata:
+      labels:
+        app: frontend
+
+    spec:
+      containers:
+        - name: frontend
+          image: andrewferdi/frontend-latest:IMAGE_TAG
+
+          ports:
+            - containerPort: 80
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+
+spec:
+  type: LoadBalancer
+
+  selector:
+    app: frontend
+
+  ports:
+    - port: 80
+      targetPort: 80

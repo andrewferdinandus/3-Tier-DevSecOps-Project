@@ -1,0 +1,196 @@
+pipeline {
+    agent any
+    
+    tools {
+        nodejs 'nodejs23'
+    }
+    
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+        TERRAFORM_HOME = tool 'terraform' 
+        AWS_REGION   = 'ap-southeast-2'
+        CLUSTER_NAME = 'dev-eks-cluster'
+        
+        BUILD_NUMBER = "${env.BUILD_NUMBER ?: 'latest'}"
+        TF_DIR       = 'terraform'
+        PATH         = "${env.TERRAFORM_HOME}:${env.PATH}" 
+    }
+
+    stages {
+        stage('SCM Checkout') {
+            steps {
+                git branch: 'local-dev', changelog: false, poll: false, url: 'https://github.com/andrewferdinandus/3-Tier-DevSecOps-Project.git'
+            }
+        }
+        
+        stage('Frontend Compilation') {
+            steps {
+                dir('client') {
+                    sh 'find . -name "*.js" -exec node --check {} +'
+                }
+            }
+        }
+        
+        stage('Backend Compilation') {
+            steps {
+                dir('api') {
+                    sh 'find . -name "*.js" -exec node --check {} +'
+                }
+            }
+        }
+        
+        stage('Gitleaks Scan') {
+            steps {
+                sh 'gitleaks detect --source ./client --exit-code 1'
+                sh 'gitleaks detect --source ./api --exit-code 1'
+            }
+        }
+        
+        stage('Sonarqube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh "${SCANNER_HOME}/bin/sonar-scanner -Dsonar.projectName=NodeJS-Project -Dsonar.projectKey=NodeJS-Project"
+                }
+            }
+        }
+        
+        stage('Quality Gate Check') {
+            steps {
+                timeout(time: 10, unit: 'MINUTES') { 
+                    waitForQualityGate abortPipeline: true 
+                }
+            }
+        }
+        
+        stage('Trivy FS Scan') {
+            steps {
+                sh 'trivy fs --format table -o trivy-fs-report.html .'
+            }
+        }
+        
+        stage('Docker build and Push Backend') {
+            steps {
+                script {
+                    def imageName = "andrewferdi/backend-latest"
+                    def buildTag = "${imageName}:${env.BUILD_NUMBER}"
+                    def latestTag = "${imageName}:latest"
+                    
+                    withDockerRegistry(credentialsId: 'docker-creds') {
+                        dir('api') {
+                            sh "docker build -t ${buildTag} -t ${latestTag} ."
+                            sh "trivy image --format table -o backend-image-report.html ${buildTag}"
+                            sh "docker push ${buildTag}"
+                            sh "docker push ${latestTag}"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Docker build and Push Frontend') {
+            steps {
+                script {
+                    def imageName = "andrewferdi/frontend-latest"
+                    def buildTag = "${imageName}:${env.BUILD_NUMBER}"
+                    def latestTag = "${imageName}:latest"
+                    
+                    withDockerRegistry(credentialsId: 'docker-creds') {
+                        dir('client') {
+                            sh "docker build -t ${buildTag} -t ${latestTag} ."
+                            sh "trivy image --format table -o frontend-image-report.html ${buildTag}"
+                            sh "docker push ${buildTag}"
+                            sh "docker push ${latestTag}"
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('EKS Infra Provisioning') {
+            steps {
+                dir("${TF_DIR}") {
+                    script {
+                        withCredentials([[
+                            $class: 'AmazonWebServicesCredentialsBinding', 
+                            credentialsId: 'aws-creds', 
+                            accessKeyVariable: 'AWS_ACCESS_KEY_ID', 
+                            secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                        ]]) {
+                            // No need for full paths now!
+                            sh 'terraform init'
+                            sh 'terraform apply -auto-approve'
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy to EKS') {
+            steps {
+                script {
+                    withCredentials([[
+                        $class: 'AmazonWebServicesCredentialsBinding',
+                        credentialsId: 'aws-creds',
+                        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                    ]]) {
+                        echo "Connecting to EKS Cluster..."
+                        sh "aws eks update-kubeconfig --region ${env.AWS_REGION} --name ${env.CLUSTER_NAME}"
+
+                        echo "Checking production.env..."
+                        sh '''
+                            echo "Keys found in production.env:"
+                            cut -d= -f1 production.env
+                        '''
+
+                        echo "Creating Kubernetes secrets..."
+                        sh '''
+                            kubectl delete secret app-secrets --ignore-not-found=true
+                            kubectl create secret generic app-secrets \
+                            --from-env-file=production.env \
+                            --dry-run=client -o yaml | kubectl apply -f -
+                        '''
+
+                        echo "Deploying MySQL..."
+                        sh "kubectl apply -f k8s/db-deployment.yaml"
+
+                        echo "Waiting for MySQL..."
+                        sh '''
+                            kubectl rollout status deployment/mysql --timeout=300s || {
+                            kubectl get pods -o wide
+                            kubectl get pvc
+                            kubectl describe pods -l app=mysql
+                            exit 1
+                            }
+                        '''
+
+                        echo "Deploying backend and frontend..."
+                        sh "kubectl apply -f k8s/app-deployment.yaml"
+
+                        echo "Updating backend image..."
+                        sh "kubectl set image deployment/backend backend=andrewferdi/backend-latest:${env.BUILD_NUMBER}"
+
+                        echo "Updating frontend image..."
+                        sh "kubectl set image deployment/frontend frontend=andrewferdi/frontend-latest:${env.BUILD_NUMBER}"
+
+                        echo "Checking backend service..."
+                        sh "kubectl get svc backend"
+
+                        echo "Waiting for backend..."
+                        sh "kubectl rollout status deployment/backend --timeout=300s"
+
+                        echo "Waiting for frontend..."
+                        sh "kubectl rollout status deployment/frontend --timeout=300s"
+
+                        echo "Deployment completed."
+                        sh '''
+                            kubectl get pods -o wide
+                            kubectl get svc
+                            kubectl get pvc
+                        '''
+                    }
+                }
+            }
+        }
+    }
+}
