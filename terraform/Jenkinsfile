@@ -7,7 +7,11 @@ pipeline {
     
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
+        TERRAFORM_HOME = tool 'terraform' 
+        
         BUILD_NUMBER = "${env.BUILD_NUMBER ?: 'latest'}"
+        TF_DIR       = 'terraform'
+        PATH         = "${env.TERRAFORM_HOME}:${env.PATH}" 
     }
 
     stages {
@@ -102,7 +106,7 @@ pipeline {
         
         stage('EKS Provisioning') {
             steps {
-                dir('terraform') {
+                dir("${TF_DIR}") {
                     script {
                         withCredentials([[
                             $class: 'AmazonWebServicesCredentialsBinding', 
@@ -110,6 +114,7 @@ pipeline {
                             accessKeyVariable: 'AWS_ACCESS_KEY_ID', 
                             secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                         ]]) {
+                            // No need for full paths now!
                             sh 'terraform init'
                             sh 'terraform apply -auto-approve'
                         }

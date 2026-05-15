@@ -22,15 +22,23 @@ module "eks" {
   cluster_name    = var.cluster_name
   cluster_version = "1.31"
 
+  # --- FIX 1: Enable OIDC Provider ---
+  # This creates the Identity Provider so K8s can use IAM roles
+  enable_irsa = true
+
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
 
   # Core Add-ons
   cluster_addons = {
-    aws-ebs-csi-driver = {} # Required for MySQL Persistence
-    coredns            = {}
-    vpc-cni            = {}
-    kube-proxy         = {}
+    aws-ebs-csi-driver = {
+      # --- FIX 2: Add Permissions to the Driver ---
+      most_recent              = true
+      attach_ebs_csi_policy    = true 
+    }
+    coredns    = {}
+    vpc-cni    = {}
+    kube-proxy = {}
   }
 
   eks_managed_node_groups = {
